@@ -1,0 +1,10 @@
+name: nba_dashboard
+title:
+username: denniswambua
+account: denniswambua
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16330826
+bundleId: 11341739
+url: https://denniswambua.shinyapps.io/nba_dashboard/
+version: 1

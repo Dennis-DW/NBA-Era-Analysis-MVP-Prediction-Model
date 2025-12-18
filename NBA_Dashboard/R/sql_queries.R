@@ -1,4 +1,4 @@
-# R/sql_queries.R
+# sql_queries.R
 
 # 1. Era Analysis (Decade Trends)
 query_era_analysis <- "
@@ -9,9 +9,9 @@ SELECT
         WHEN CAST(SUBSTR(season, 1, 4) AS INT) BETWEEN 2010 AND 2019 THEN '2010s'
         ELSE '2020s' 
     END as decade,
-    ROUND(AVG(player_height), 2) as avg_height,
-    ROUND(AVG(player_weight), 2) as avg_weight,
-    ROUND(AVG(pts), 2) as avg_pts
+    AVG(player_height) as avg_height,
+    AVG(player_weight) as avg_weight,
+    AVG(pts) as avg_pts
 FROM nba_seasons
 GROUP BY decade
 ORDER BY decade;
@@ -24,16 +24,14 @@ SELECT
         WHEN CAST(draft_year AS INT) = CAST(SUBSTR(season, 1, 4) AS INT) THEN 'Rookie'
         ELSE 'Veteran' 
     END as status,
-    ROUND(AVG(pts), 1) as avg_pts,
-    ROUND(AVG(net_rating), 1) as avg_rating
+    AVG(pts) as avg_pts,
+    AVG(net_rating) as avg_rating
 FROM nba_seasons
 WHERE draft_year IS NOT NULL
 GROUP BY status;
 "
 
-# (Removed old query_dream_team from here to avoid duplicates)
-
-# 4. Rank Season Leaders (Top 3 Scorers per Season)
+# 4. Rank Season Leaders
 query_season_leaders <- "
 SELECT season, rank_num, player_name, pts, gp as games_played
 FROM (
@@ -46,7 +44,7 @@ WHERE rank_num <= 3
 ORDER BY season DESC, rank_num ASC;
 "
 
-# 5. Efficiency Stats (High Usage & High TS%)
+# 5. Efficiency Stats
 query_efficiency <- "
 SELECT season, player_name, pts, gp, 
        usg_pct as usage_rate, 
@@ -55,10 +53,10 @@ FROM nba_seasons
 WHERE usg_pct > 0.30 AND ts_pct > 0.60 AND gp > 40
 ORDER BY ts_pct DESC;
 "
-# 6. Dream Team (Unique Players Only - Best Season)
+
+# 6. Dream Team
 query_dream_team <- "
 WITH PlayerBestSeasons AS (
-    -- 1. Get every player's stats and calculate MVP score
     SELECT 
         player_name, season, pts, reb, ast, net_rating, ts_pct,
         (pts + reb + ast + net_rating) as mvp_score,
@@ -67,17 +65,14 @@ WITH PlayerBestSeasons AS (
             WHEN player_height > 201 THEN 'Forward'
             ELSE 'Guard' 
         END as position,
-        -- 2. Rank each player's OWN seasons to find their peak
         ROW_NUMBER() OVER(PARTITION BY player_name ORDER BY (pts + reb + ast + net_rating) DESC) as player_peak_rank
     FROM nba_seasons
     WHERE gp > 40
 ),
 UniquePlayers AS (
-    -- 3. Keep only the BEST season for each player (Removes Duplicates)
     SELECT * FROM PlayerBestSeasons WHERE player_peak_rank = 1
 ),
 FinalRoster AS (
-    -- 4. Now rank the unique players by position
     SELECT *,
         ROW_NUMBER() OVER(PARTITION BY position ORDER BY mvp_score DESC) as pos_rank
     FROM UniquePlayers
@@ -102,9 +97,9 @@ query_team_trends <- "
 SELECT 
     season,
     team_abbreviation as team,
-    ROUND(AVG(pts), 1) as avg_pts,
-    ROUND(AVG(net_rating), 1) as avg_rating,
-    ROUND(AVG(ts_pct) * 100, 1) as avg_ts
+    AVG(pts) as avg_pts,
+    AVG(net_rating) as avg_rating,
+    AVG(ts_pct) * 100 as avg_ts
 FROM nba_seasons
 WHERE team_abbreviation IS NOT NULL
 GROUP BY season, team_abbreviation
@@ -116,7 +111,7 @@ query_top_colleges <- "
 SELECT 
     college, 
     COUNT(DISTINCT player_name) as player_count,
-    ROUND(AVG(pts), 1) as avg_ppg
+    AVG(pts) as avg_ppg
 FROM nba_seasons
 WHERE college IS NOT NULL AND college != 'None' AND college != ''
 GROUP BY college
@@ -157,18 +152,15 @@ query_all_players <- "
 SELECT DISTINCT player_name FROM nba_seasons ORDER BY player_name;
 "
 
-# 12. Player Career Stats
+# --- 12. Player Career Stats (UPDATED FOR ROBUSTNESS) ---
+# We use SELECT * so R can handle renaming 'height' vs 'player_height' automatically
 query_player_career <- "
-SELECT 
-    season, team_abbreviation as team, age, 
-    player_height as height, player_weight as weight,
-    gp, pts, reb, ast, net_rating, ts_pct
-FROM nba_seasons
+SELECT * FROM nba_seasons
 WHERE player_name = ?
 ORDER BY season;
 "
 
-# 13. Top 10 Most Improved Chart (Visual)
+# 13. Top 10 Most Improved Chart
 query_top_improved_chart <- "
 WITH LaggedStats AS (
     SELECT 
@@ -179,15 +171,14 @@ WITH LaggedStats AS (
 )
 SELECT 
     player_name, season, pts as current_pts, prev_pts,
-    ROUND(pts - prev_pts, 1) as ppg_increase
+    (pts - prev_pts) as ppg_increase
 FROM LaggedStats
 WHERE prev_pts IS NOT NULL AND prev_gp > 20 AND gp > 20
 ORDER BY ppg_increase DESC
 LIMIT 10;
 "
 
-# 14. Most Improved Table (Detailed Data)
-# THIS WAS MISSING BEFORE - CAUSING THE ERROR
+# 14. Most Improved Table
 query_most_improved <- "
 WITH LaggedStats AS (
     SELECT 
@@ -199,7 +190,7 @@ WITH LaggedStats AS (
 SELECT 
     player_name, team, season, 
     prev_pts as 'Pre_PPG', pts as 'Post_PPG',
-    ROUND(pts - prev_pts, 1) as 'Diff'
+    (pts - prev_pts) as 'Diff'
 FROM LaggedStats
 WHERE prev_pts IS NOT NULL AND prev_gp > 20 AND gp > 20
 ORDER BY Diff DESC
@@ -215,30 +206,26 @@ SELECT
 FROM nba_seasons;
 "
 
-# 16. Era KPIs (NEW - Headlines)
+# 16. Era KPIs
 query_era_kpis <- "
 SELECT 
-    -- Season with highest average points
     (SELECT season FROM nba_seasons GROUP BY season ORDER BY AVG(pts) DESC LIMIT 1) as high_score_szn,
-    (SELECT ROUND(AVG(pts),1) FROM nba_seasons GROUP BY season ORDER BY AVG(pts) DESC LIMIT 1) as max_pts,
+    (SELECT AVG(pts) FROM nba_seasons GROUP BY season ORDER BY AVG(pts) DESC LIMIT 1) as max_pts,
     
-    -- Season with highest average height
     (SELECT season FROM nba_seasons GROUP BY season ORDER BY AVG(player_height) DESC LIMIT 1) as tall_szn,
-    (SELECT ROUND(AVG(player_height),1) FROM nba_seasons GROUP BY season ORDER BY AVG(player_height) DESC LIMIT 1) as max_ht,
+    (SELECT AVG(player_height) FROM nba_seasons GROUP BY season ORDER BY AVG(player_height) DESC LIMIT 1) as max_ht,
 
-    -- Season with highest efficiency (TS%)
     (SELECT season FROM nba_seasons GROUP BY season ORDER BY AVG(ts_pct) DESC LIMIT 1) as efficient_szn,
-    (SELECT ROUND(AVG(ts_pct)*100,1) FROM nba_seasons GROUP BY season ORDER BY AVG(ts_pct) DESC LIMIT 1) as max_ts
+    (SELECT AVG(ts_pct)*100 FROM nba_seasons GROUP BY season ORDER BY AVG(ts_pct) DESC LIMIT 1) as max_ts
 ;
 "
 
-# 17. The Strategic Revolution (Scoring vs Efficiency)
-# Uses ts_pct (Efficiency) and pts (Volume) to show the modern offensive boom
+# 17. The Strategic Revolution
 query_scoring_efficiency <- "
 SELECT 
     season,
-    ROUND(AVG(pts), 1) as avg_pts,
-    ROUND(AVG(ts_pct) * 100, 1) as avg_efficiency
+    AVG(pts) as avg_pts,
+    AVG(ts_pct) * 100 as avg_efficiency
 FROM nba_seasons
 GROUP BY season
 ORDER BY season;

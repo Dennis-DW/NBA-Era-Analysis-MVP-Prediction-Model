@@ -1,113 +1,113 @@
 # modules/server_dream_team.R
 
-# --- 3. DREAM TEAM DATA ---
-dream_team_data <- reactive({ get_data(query_dream_team) })
+# --- 1. DATA FETCHING ---
+dream_data <- reactive({
+  # Fetches the Dream Team data using the query from sql_queries.R
+  df <- get_data(query_dream_team)
+  
+  if(!is.null(df)) {
+    # Clean MVP Score (Round to 2 decimals)
+    df$mvp_score <- round(as.numeric(df$mvp_score), 2)
+    # Ensure numeric stats
+    df$pts <- as.numeric(df$pts)
+    df$reb <- as.numeric(df$reb)
+    df$ast <- as.numeric(df$ast)
+    df$ts_pct <- as.numeric(df$ts_pct)
+  }
+  return(df)
+})
 
-# --- A. RENDER CARDS (2-2-1 FORMATION) ---
-output$dream_team_cards <- renderUI({
-  df <- dream_team_data()
+# --- 2. RENDER STARTERS (HORIZONTAL ROW) ---
+output$dream_starters_row <- renderUI({
+  df <- dream_data()
+  req(df)
   
-  # 1. Separate Starters by Position
-  starters <- df %>% filter(role == "Starter")
-  guards   <- starters %>% filter(position == "Guard")
-  forwards <- starters %>% filter(position == "Forward")
-  centers  <- starters %>% filter(position == "Center")
+  # Filter Starters
+  starters <- df %>% filter(role == "Starter") %>% arrange(desc(mvp_score))
   
-  # 2. Helper function to make a single card
-  create_card <- function(p) {
-    # Shorten Name (e.g., "L. James")
-    short_name <- sub("^(\\w)\\w+\\s", "\\1. ", p$player_name)
+  # Helper to create HTML Card
+  create_starter_card <- function(player) {
+    # Determine Image
+    img_file <- "guard.png" # Default
+    if(grepl("Center", player$position)) img_file <- "center.png"
+    if(grepl("Forward", player$position)) img_file <- "forward.png"
     
-    div(class = "dream-card",
-        div(class = "dc-header",
-            div(class = "dc-pos", substr(p$position, 1, 1)),
-            div(class = "dc-score", round(p$mvp_score, 1))
+    div(class = "starter-card",
+        div(class = "sc-pos", player$position),
+        
+        # Image Area
+        div(class = "sc-img-box",
+            img(src = img_file)
         ),
-        div(class = "dc-name", short_name),
-        div(class = "dc-year", p$season),
-        div(class = "dc-stats",
-            span(paste(p$pts, "PTS")),
-            span(paste(p$reb, "REB")),
-            span(paste(p$ast, "AST"))
+        
+        # Name & Info
+        h3(class = "sc-name", player$player_name),
+        div(class = "sc-year", paste0(player$team_abbreviation, " '", substr(player$season, 3, 7))),
+        
+        # MVP Score Badge
+        div(class = "sc-mvp-badge", paste0("MVP SCORE: ", player$mvp_score)),
+        
+        # Stats Grid
+        div(class = "sc-stats",
+            div(class="sc-stat-item", span(class="sc-val", round(player$pts,1)), span(class="sc-lbl", "PTS")),
+            div(class="sc-stat-item", span(class="sc-val", round(player$reb,1)), span(class="sc-lbl", "REB")),
+            div(class="sc-stat-item", span(class="sc-val", round(player$ast,1)), span(class="sc-lbl", "AST"))
         )
     )
   }
   
-  # 3. Render the 2-2-1 Layout
-  div(class = "dream-container",
-      
-      # ROW 1: GUARDS (2 Players)
-      div(class = "formation-row",
-          lapply(1:nrow(guards), function(i) create_card(guards[i, ]))
-      ),
-      
-      # ROW 2: FORWARDS (2 Players)
-      div(class = "formation-row",
-          lapply(1:nrow(forwards), function(i) create_card(forwards[i, ]))
-      ),
-      
-      # ROW 3: CENTER (1 Player)
-      div(class = "formation-row",
-          lapply(1:nrow(centers), function(i) create_card(centers[i, ]))
-      )
+  # Return the Flex Container with all 5 cards
+  div(class = "lineup-container",
+      lapply(1:nrow(starters), function(i) {
+        create_starter_card(starters[i, ])
+      })
   )
 })
 
-# --- B. RADAR CHART (Kept same) ---
-output$mvp_comparison_plot <- renderPlotly({
-  df <- dream_team_data() %>% filter(role == "Starter")
+# --- 3. BENCH TABLE ---
+output$table_bench <- renderDT({
+  df <- dream_data()
+  validate(need(nrow(df) > 0, "Loading..."))
   
-  radar_data <- df %>% select(player_name, pts, reb, ast, net_rating, ts_pct)
-  scale_max <- function(x) { x / max(x) }
+  bench <- df %>% 
+    filter(role == "Bench") %>%
+    select(Pos = position, Player = player_name, Year = season, MVP = mvp_score) %>%
+    head(10)
   
-  radar_scaled <- radar_data %>%
-    mutate(
-      pts_norm = scale_max(pts),
-      reb_norm = scale_max(reb),
-      ast_norm = scale_max(ast),
-      net_norm = scale_max(net_rating),
-      ts_norm  = scale_max(ts_pct)
-    )
+  datatable(bench,
+            options = list(pageLength = 5, lengthChange = F, searching = F, dom = 'tp', info = F),
+            style = "bootstrap", rownames = FALSE
+  ) %>% 
+    formatStyle(names(bench), backgroundColor = '#272B30', color = '#ECF0F1', border = '1px solid #34495E') %>%
+    formatStyle("MVP", color = "#F1C40F", fontWeight = "bold")
+})
+
+# --- 4. RADAR CHART ---
+output$dream_radar <- renderPlotly({
+  df <- dream_data()
+  validate(need(nrow(df) > 0, "No data."))
   
-  fig <- plot_ly(type = 'scatterpolar', fill = 'toself')
-  colors <- c("#E74C3C", "#3498DB", "#F1C40F", "#9B59B6", "#2ECC71")
+  # Calculate Avgs
+  s_avg <- df %>% filter(role == "Starter") %>% summarise(p=mean(pts), r=mean(reb), a=mean(ast), e=mean(ts_pct*100))
+  b_avg <- df %>% filter(role == "Bench") %>% summarise(p=mean(pts), r=mean(reb), a=mean(ast), e=mean(ts_pct*100))
   
-  for(i in 1:nrow(radar_scaled)) {
-    row <- radar_scaled[i, ]
-    raw <- radar_data[i, ]
-    short_name <- sub("^(\\w)\\w+\\s", "\\1. ", row$player_name)
-    
-    fig <- fig %>%
-      add_trace(
-        r = c(row$pts_norm, row$reb_norm, row$ast_norm, row$net_norm, row$ts_norm, row$pts_norm),
-        theta = c("Points", "Rebounds", "Assists", "Net Rating", "Efficiency", "Points"),
-        name = short_name,
-        mode = "lines+markers",
-        line = list(color = colors[i]),
-        fillcolor = paste0(colors[i], "33"),
-        hoverinfo = "text",
-        text = paste0("<b>", row$player_name, "</b><br>PTS: ", raw$pts)
-      )
-  }
+  norm <- function(v, m) { pmin(v/m, 1) }
   
-  fig %>%
-    layout(
-      polar = list(radialaxis = list(visible = TRUE, range = c(0, 1), showticklabels = FALSE), bgcolor = "#272B30"),
-      plot_bgcolor = "#272B30", paper_bgcolor = "#272B30",
-      font = list(color = "#BDC3C7"),
-      legend = list(orientation = "h", x = 0.1, y = 1.1),
-      margin = list(t = 30, b = 30)
+  plot_ly(type = 'scatterpolar', mode = "lines+markers") %>%
+    add_trace(
+      r = c(norm(s_avg$p, 35), norm(s_avg$r, 15), norm(s_avg$a, 12), norm(s_avg$e, 70), norm(s_avg$p, 35)),
+      theta = c("Scoring", "Reb", "Ast", "Eff", "Scoring"),
+      name = "Starters", fill = 'toself', fillcolor = 'rgba(241, 196, 15, 0.3)', line = list(color = '#F1C40F')
     ) %>%
-    config(displayModeBar = FALSE)
-})
-
-# --- C. BENCH TABLE (Kept same) ---
-output$bench_table <- renderDT({
-  datatable(
-    dream_team_data() %>% 
-      filter(role == "Bench") %>% 
-      select(Pos = position, Player = player_name, Year = season, MVP = mvp_score), 
-    style = "bootstrap", 
-    options = list(dom = 't', pageLength = 5, lengthChange = FALSE)
-  )
+    add_trace(
+      r = c(norm(b_avg$p, 35), norm(b_avg$r, 15), norm(b_avg$a, 12), norm(b_avg$e, 70), norm(b_avg$p, 35)),
+      theta = c("Scoring", "Reb", "Ast", "Eff", "Scoring"),
+      name = "Bench", fill = 'toself', fillcolor = 'rgba(127, 140, 141, 0.3)', line = list(color = '#95A5A6')
+    ) %>%
+    layout(
+      polar = list(radialaxis = list(visible = F), bgcolor = "rgba(0,0,0,0)"),
+      paper_bgcolor = "rgba(0,0,0,0)", plot_bgcolor = "rgba(0,0,0,0)",
+      legend = list(orientation = "h", x=0.5, y=-0.1, font = list(color="white")),
+      margin = list(t=10, b=10)
+    ) %>% config(displayModeBar = F)
 })
